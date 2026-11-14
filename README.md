@@ -1,42 +1,107 @@
 # rcs-group-bot
 
-An AI member for your **Google Messages (RCS) group chat**. Start a message with "bot" (or "hey bot", "@bot") and it answers in the thread. It can look things up, settle arguments with sources, read photos, remember things about the group, recall old messages, set reminders, and even write new features for itself as pull requests you approve.
+**An AI member for your Google Messages group chat.** Start a message with "bot" and it replies right in the thread. It looks things up, settles arguments with sources, reads photos, remembers things about your group, digs up old messages, and sets reminders. Ask it for a new feature and it writes the code itself, as a pull request you approve.
 
-It runs on [Vercel](https://vercel.com) and talks through **your own Android phone's number** (every bot message starts with 🤖), so nobody needs a new app or a new number. Replies use Claude through Vercel AI Gateway, or an optional local model on your own GPU.
+```text
+Sam:     bot who's right, is a hot dog a sandwich?
+🤖 bot:  Sam says yes, Jordan says no. By the USDA's labeling definition (meat
+         between bread), Sam's technically right. But Merriam-Webster and the
+         National Hot Dog and Sausage Council both say it's its own thing.
+         Verdict: Sam wins on paper, Jordan wins on vibes.
+Jordan:  [photo] bot what plant is this, is it safe for my cat
+🤖 bot:  That's a pothos. Not safe: it's toxic to cats (mouth irritation,
+         drooling, vomiting). Keep it on a high shelf.
+```
+
+There's no new app or phone number to set up. The bot runs on [Vercel](https://vercel.com) and posts **from your own Android phone's number**, with every message starting with 🤖 so nobody confuses it with you. Everyone in the group just keeps using their normal messaging app, iPhones included.
 
 > [!WARNING]
-> This relies on an **unofficial, reverse-engineered** Google Messages web protocol (the one [mautrix-gmessages](https://github.com/mautrix/gmessages) uses). Google could change or block it at any time, and using it may break Google's terms. Only add the bot to chats where **everyone knows and agrees** that an AI reads the messages addressed to it. Messages it reads are sent to your model provider. You're responsible for how you use it.
+> This uses an **unofficial, reverse-engineered** Google Messages web protocol (the same one as [mautrix-gmessages](https://github.com/mautrix/gmessages)). Google could change or block it at any time, and using it may go against Google's terms. Only add the bot to chats where **everyone knows and is OK with** an AI reading the messages sent to it. See [Privacy](#privacy-what-the-bot-sees-and-stores).
 
-## Set it up (easiest: let an AI agent do it)
+## Contents
 
-The recommended way to install is to have an AI coding agent run the setup for you. [`SETUP.md`](SETUP.md) is written for that: the agent runs every command, stores the secrets, deploys, and only stops when it needs you (Google sign-in, tapping an emoji on your phone, picking the chat).
+- [Get started](#get-started)
+- [What it can do](#what-it-can-do)
+- [Using it in the chat](#using-it-in-the-chat)
+- [What it costs](#what-it-costs)
+- [Privacy: what the bot sees and stores](#privacy-what-the-bot-sees-and-stores)
+- [Things to know](#things-to-know)
+- [Make it yours](#make-it-yours)
+- [How it works (technical)](#how-it-works-technical)
 
-1. Click **Use this template → Create a new repository** and make it **private** (your group file will contain real names). Or run `gh repo create my-group-bot --private --template pwillia7/rcs-group-bot --clone`.
-2. Open your copy in [Claude Code](https://claude.com/claude-code) (or another coding agent) and run **`/setup`**, or say *"Set up this bot by following SETUP.md."*
+## Get started
 
-Doing it by hand? Follow the same [`SETUP.md`](SETUP.md) yourself. Every step works in a normal terminal.
+**The easiest way is to let an AI coding agent set it up for you.** The setup guide, [`SETUP.md`](SETUP.md), is written so an agent like [Claude Code](https://claude.com/claude-code) can do everything: create the cloud resources, generate and store the secrets, and deploy. It stops only for the parts that need you (signing in to Google, tapping an emoji on your phone, choosing the chat).
 
-**You'll need:** an Android phone with Google Messages and RCS turned on, a Vercel **Pro** account (the connector runs 24/7), a GitHub account, and about 30–45 minutes. iPhone users can be in the group; they just can't host the bot.
+1. Click **Use this template → Create a new repository**, and make it **private**, because it'll hold your friends' names. From a terminal: `gh repo create my-group-bot --private --template pwillia7/rcs-group-bot --clone`
+2. Open your new repo in Claude Code and type **`/setup`**. With another agent, tell it *"Set up this bot by following SETUP.md."*
+
+It takes about 30–45 minutes. If you'd rather do it yourself, `SETUP.md` works as a normal step-by-step guide too.
+
+**What you need:**
+
+- An **Android phone** with Google Messages as its texting app and **RCS chats** turned on. It hosts the bot, so it should stay on and connected.
+- A **[Vercel](https://vercel.com) account on the Pro plan.** The part that talks to your phone runs around the clock, which needs Pro.
+- A **GitHub** account.
+- A computer with Chrome, for the one-time sign-in.
 
 ## What it can do
 
-- **Answer and look things up.** Web search with sources, plus fast page and API fetches. A real browser in a sandbox handles pages that need JavaScript.
-- **Settle arguments** fairly: it states both sides, checks the facts, and gives a verdict with sources.
-- **See photos** sent to the group, including ones sent together with the question.
-- **Remember** group facts and preferences in a shared notes document, and **search old messages** on the phone (even ones from before it joined).
-- **Reminders** ("bot remind us Friday at 7 to book the table"), with repeats.
-- **A daily "stupid quote"** from the chat's past, at 9 AM (optional).
-- **Improve itself.** Ask "bot, add a tool that…" and it opens a draft pull request on your repo. Nothing changes until the owner merges it.
-- **Commands:** `/status`, `/model auto|qwen|claude`, `/new` (fresh conversation; memory is kept), `/help`.
+- **Answer questions and look things up**, with sources. It searches the web, reads pages, and uses free data sources for sports scores, weather and more. For sites that only work in a real browser, it has one.
+- **Settle arguments fairly.** It states each side, checks the facts, and gives a verdict with sources. The phone's owner gets no special treatment.
+- **Look at photos**, including one sent together with the question.
+- **Remember things** about the group ("bot remember that Sam is vegetarian"), in a shared notes document.
+- **Search the chat's history** on the phone, even from before the bot joined ("bot when did we last talk about the cabin trip?").
+- **Set reminders** ("bot remind us Friday at 7 to book the table"), including repeating ones.
+- **Post a daily "stupid quote"** dug up from the chat's past (optional, 9 AM).
+- **Add features to itself.** "bot, add a tool that tracks who owes who money" makes the bot write the code and open a draft pull request on your GitHub repo. Nothing changes until the owner reviews and merges it.
+
+## Using it in the chat
+
+The bot answers a message when it **starts with "bot"**, or "hey bot", "ok bot", "yo bot", or when it contains **"@bot"** anywhere. Talking *about* the bot ("the bot was wrong yesterday") doesn't trigger it. It reads the recent messages since it last spoke, so "bot what do you think?" works mid-conversation.
+
+| Command | What it does |
+|---|---|
+| `/status` | Shows which AI model the next reply will use |
+| `/model auto` · `/model claude` · `/model qwen` | Switch models (`qwen` is only for the optional local model) |
+| `/new` | Start a fresh conversation. Long-term notes are kept. |
+| `/help` | Show the commands |
+
+## What it costs
+
+- **Vercel Pro:** $20/month per seat, plus usage. A group chat bot uses very little.
+- **AI replies:** pay as you go through [Vercel AI Gateway](https://vercel.com/ai-gateway). With the default model (Claude Sonnet 5.5) a typical reply costs about **1–2 cents**, and a web search adds about $0.007.
+- **Upstash Redis and Vercel Blob:** the free tiers are plenty.
+- **Optional:** run replies on your own gaming PC (24 GB of GPU memory) with a local Qwen model, and AI replies become free whenever the PC is on.
+
+## Privacy: what the bot sees and stores
+
+- **One chat only.** The connector reads only the conversation(s) you list in `ALLOWED_CONVERSATIONS`. Everything else on the phone is dropped on the spot, never logged and never sent anywhere.
+- **What goes to the AI:** messages addressed to the bot, up to 40 messages posted since it last replied (for context), and up to 4 recent photos. They're sent to your model provider (Anthropic via Vercel AI Gateway, or your own PC).
+- **What's stored:** recent un-addressed messages and photos are kept in your Redis for up to 3 days as context, then deleted. The bot's conversation history and its notes document live in your Vercel project. The Google session is stored encrypted.
+- **It's all yours.** Every piece runs in your own Vercel, Upstash and GitHub accounts. Nothing goes to the authors of this project.
+- The bot's messages appear as sent by the phone's owner (with the 🤖 prefix), because they are.
+
+## Things to know
+
+- **The phone has to stay on and online.** If it dies or loses signal, the bot goes quiet until it's back.
+- **Google signs the bot out a few times a day.** You get a phone alert (via [ntfy](https://ntfy.sh)), and reconnecting takes a few minutes in a browser. If you have a Windows PC that's always on, the included cookie helper reconnects it automatically within about 2 minutes.
+- **One group per bot** is the intended setup. Each group gets its own copy, with its own personality file.
+- **It's an AI.** It can be wrong. It cites sources when it checks facts, so you can verify them.
 
 ## Make it yours
 
-- **`agent/instructions/group.md`**: who's in the group, nicknames, and who owns the phone. This is the one file every group should edit.
-- **`agent/instructions.md`**: the bot's personality and rules (tone, how it settles arguments, when to search).
-- **Settings**: Vercel environment variables, all documented in [`.env.example`](.env.example): trigger word, timezone, model, the daily quote, alerts.
-- **New tools**: add a file under `agent/tools/` (see the existing ones), or ask the bot to write one.
+| What | Where |
+|---|---|
+| **Who's in the group**, nicknames, who owns the phone | `agent/instructions/group.md`. Every group edits this. |
+| The bot's **personality and rules** (tone, how it argues, when it searches) | `agent/instructions.md` |
+| **Settings**: trigger word, timezone, model, daily quote, alerts | Vercel environment variables, all listed in [`.env.example`](.env.example) |
+| **New abilities** | Add a tool in `agent/tools/`, or just ask the bot to build one |
+| Run on your **own GPU** | `desktop/qwen-bot/` (Windows + llama.cpp), see SETUP.md step 9 |
 
-## How it works
+The agent is built with [eve](https://eve.dev), Vercel's framework for durable AI agents. Its docs cover tools, skills, schedules and memory.
+
+## How it works (technical)
 
 ```mermaid
 flowchart LR
@@ -58,7 +123,7 @@ flowchart LR
         COOKIES["gm-cookies.exe<br/><i>every 2 min</i>"]
     end
 
-    GATEWAY["AI Gateway<br/>Claude fallback"]
+    GATEWAY["AI Gateway<br/>Claude (default)"]
     NTFY["ntfy<br/>alerts"]
     GH["GitHub<br/>your repo"]
 
@@ -67,13 +132,13 @@ flowchart LR
     AGENT -->|"replies · typing ·<br/>history requests"| REDIS
     REDIS -->|"BRPOP outbox"| CONN
     CONN -->|"history replies ·<br/>heartbeat · state"| REDIS
-    AGENT -->|"Tailscale Funnel<br/>(when up)"| QWEN
-    AGENT -.->|"fallback"| GATEWAY
+    AGENT -.->|"optional, via<br/>Tailscale Funnel"| QWEN
+    AGENT -->|"model calls"| GATEWAY
     AGENT --- SANDBOX
     AGENT --- BLOB
     CONN -->|"logout · phone down ·<br/>re-pair emoji"| NTFY
     AGENT -->|"watchdog: no heartbeat"| NTFY
-    COOKIES -->|"/gm/admin/state ·<br/>/gm/admin/cookies"| AGENT
+    COOKIES -.->|"/gm/admin/state ·<br/>/gm/admin/cookies"| AGENT
     AGENT -.->|"self-modification<br/>draft PRs"| GH
     GH -->|"merge → deploy"| vercel
 ```
@@ -104,31 +169,37 @@ Anyone in the group can ask the bot for a new tool, skill or behavior change. A 
 - `agent/extensions/browser/` adds [agent-browser](https://agent-browser.dev): a real Chromium in the Vercel Sandbox for JavaScript-heavy pages such as showtimes. `agent/sandbox.ts` preinstalls it in a prepared snapshot at deploy time.
 - Every reply passes through `agent/lib/rcs-format.ts`, which converts Markdown to plain text (bold, headings, tables, links, code) because RCS bubbles don't render it.
 
-## Layout
+
+### Repo layout
 
 | Path | What |
 |---|---|
-| `connector/` | Go daemon built on [libgm](https://github.com/mautrix/gmessages). It pairs with the phone, forwards allowlisted group messages to the agent, and sends replies from the Redis outbox with a `🤖 ` prefix.  |
-| `agent/` | [eve](https://eve.dev) agent. It holds the `gmessages` channel (webhook, trigger, backlog, `/commands`), Qwen→Claude model routing, group memory, and instructions. |
-| `desktop/qwen-bot/` | Windows llama.cpp profile for the bot: port 18081, its own API key, started by a scheduled task. |
-| `desktop/gm-cookies/` | Windows helper (Go + chromedp) that refreshes the connector's Google cookies on demand. |
-| `agent/instructions/group.md` | **Your group**: members, nicknames, owner. Edit this. |
-| `SETUP.md` | Step-by-step setup, written for an AI coding agent (or you). |
-| `vercel.json` | Daemon definition for the connector. |
+| `agent/instructions/group.md` | Your group: members, nicknames, owner |
+| `agent/` | The [eve](https://eve.dev) agent: chat channel, tools, schedules, model routing, memory |
+| `connector/` | Go daemon built on [libgm](https://github.com/mautrix/gmessages): holds the phone session, forwards the allowed chat, sends replies |
+| `desktop/gm-cookies/` | Optional Windows helper that reconnects Google automatically |
+| `desktop/qwen-bot/` | Optional local model on a Windows GPU PC (llama.cpp) |
+| `SETUP.md` | Setup guide, for an AI agent or you |
+| `.env.example` | Every setting, explained |
+| `vercel.json` | Runs the connector as a Vercel Daemon |
 
-## Operations
+### Operations
 
 ```bash
-vercel logs --since 30m --query 'source:daemon'    # connector
+vercel logs --since 30m --query 'source:daemon'    # connector logs
 vercel logs --since 30m                             # everything
 vercel daemons list                                  # connector status
-vercel daemons scale gm-connector iad1=0             # stop the connector (e.g. before re-pairing); iad1=1 to start
+vercel daemons scale gm-connector iad1=0             # stop the connector (iad1=1 to start it)
 ```
 
-To re-pair after Google drops the session (ntfy tells you), repeat SETUP.md step 6, or install the Windows cookie helper so it fixes itself.
+When Google signs the bot out and you don't run the cookie helper, repeat [SETUP.md](SETUP.md) step 6.
+
+## Contributing
+
+Issues and pull requests are welcome. Keep anything group-specific out of shared code: it belongs in `agent/instructions/group.md`. Before sending a PR, run `npx tsc --noEmit -p .` and `cd connector && go vet ./... && go test ./...`.
 
 ## License
 
-[AGPL-3.0](LICENSE). The connector links [libgm](https://github.com/mautrix/gmessages) from mautrix-gmessages, which is AGPL-licensed. If you run a modified version as a service for others, the AGPL requires you to offer them your source.
+[AGPL-3.0](LICENSE). The connector uses [libgm](https://github.com/mautrix/gmessages), which is AGPL-licensed. In short: you can use and change this freely, but if you offer a modified version as a service to other people, you have to share your source with them.
 
 Not affiliated with Google, Vercel, or Anthropic.
