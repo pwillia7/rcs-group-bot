@@ -11,7 +11,7 @@ It runs on [Vercel](https://vercel.com) and talks through **your own Android pho
 
 The recommended way to install is to have an AI coding agent run the setup for you. [`SETUP.md`](SETUP.md) is written for that: the agent runs every command, stores the secrets, deploys, and only stops when it needs you (Google sign-in, tapping an emoji on your phone, picking the chat).
 
-1. Click **Use this template → Create a new repository** and make it **private** (your group file will contain real names). Or run `gh repo create my-group-bot --private --template <this-repo> --clone`.
+1. Click **Use this template → Create a new repository** and make it **private** (your group file will contain real names). Or run `gh repo create my-group-bot --private --template pwillia7/rcs-group-bot --clone`.
 2. Open your copy in [Claude Code](https://claude.com/claude-code) (or another coding agent) and run **`/setup`**, or say *"Set up this bot by following SETUP.md."*
 
 Doing it by hand? Follow the same [`SETUP.md`](SETUP.md) yourself. Every step works in a normal terminal.

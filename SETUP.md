@@ -37,7 +37,7 @@ Confirm with the user, and with commands where possible:
 The group file will contain real names, so the copy must be **private**.
 
 ```bash
-gh repo create <name> --private --template <upstream-owner>/rcs-group-bot --clone
+gh repo create <name> --private --template pwillia7/rcs-group-bot --clone
 cd <name>
 npm install
 ```
