@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "daemons": {
+    "gm-connector": {
+      "root": "connector/",
+      "entrypoint": "Dockerfile",
+      "command": ["/gm-connector", "serve"],
+      "instances": { "iad1": 1 },
+      "resources": { "requests": { "memory": "1Gi" } },
+      "livenessProbe": { "httpGet": { "path": "/healthz", "port": 8081 } },
+      "terminationGracePeriodSeconds": 15
+    }
+  }
+}

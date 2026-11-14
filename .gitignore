@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env*.local
+connector/.env
+connector/.data/
+connector/gm-connector
+.eve/
+.output/
+.vercel/
+*.cookies.txt
+.vercel
+.env*
+*.log
+.data/
+desktop/gm-cookies/gm-cookies.exe
+!.env.example
