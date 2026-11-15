@@ -54,19 +54,19 @@ func env(key, def string) string {
 
 func loadConfig() Config {
 	cfg := Config{
-		RedisURL:           os.Getenv("REDIS_URL"),
-		RedisPrefix:        env("REDIS_PREFIX", "gm"),
-		DataDir:            env("DATA_DIR", ".data"),
-		SessionKey:         os.Getenv("SESSION_KEY"),
-		WebhookURL:         os.Getenv("WEBHOOK_URL"),
-		WebhookSecret:      os.Getenv("WEBHOOK_SECRET"),
-		WebhookBypass:      os.Getenv("VERCEL_PROTECTION_BYPASS"),
-		LineMode:           env("LINE_MODE", "self"),
-		LineSIMParticipant: os.Getenv("LINE_SIM_PARTICIPANT"),
-		BotPrefix:          env("BOT_PREFIX", "🤖 "),
-		HTTPAddr:           env("HTTP_ADDR", "127.0.0.1:8081"),
-		DevAPI:             os.Getenv("DEV_API") == "1",
-		NtfyURL:            os.Getenv("NTFY_URL"),
+		RedisURL:             os.Getenv("REDIS_URL"),
+		RedisPrefix:          env("REDIS_PREFIX", "gm"),
+		DataDir:              env("DATA_DIR", ".data"),
+		SessionKey:           os.Getenv("SESSION_KEY"),
+		WebhookURL:           os.Getenv("WEBHOOK_URL"),
+		WebhookSecret:        os.Getenv("WEBHOOK_SECRET"),
+		WebhookBypass:        os.Getenv("VERCEL_PROTECTION_BYPASS"),
+		LineMode:             env("LINE_MODE", "self"),
+		LineSIMParticipant:   os.Getenv("LINE_SIM_PARTICIPANT"),
+		BotPrefix:            env("BOT_PREFIX", "🤖 "),
+		HTTPAddr:             env("HTTP_ADDR", "127.0.0.1:8081"),
+		DevAPI:               os.Getenv("DEV_API") == "1",
+		NtfyURL:              os.Getenv("NTFY_URL"),
 		AllowedConversations: map[string]struct{}{},
 	}
 	for _, id := range strings.Split(os.Getenv("ALLOWED_CONVERSATIONS"), ",") {
@@ -93,10 +93,12 @@ func openStore(cfg Config) (Store, error) {
 }
 
 func main() {
-	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.Kitchen}).With().Timestamp().Logger()
+	// authWatcher sees every log line (raw JSON) to catch libgm's HTTP 401s early.
+	var out io.Writer = zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.Kitchen}
 	if os.Getenv("LOG_JSON") == "1" {
-		log = zerolog.New(os.Stderr).With().Timestamp().Logger()
+		out = os.Stderr
 	}
+	log := zerolog.New(io.MultiWriter(out, authWatcher)).With().Timestamp().Logger()
 	if lvl, err := zerolog.ParseLevel(env("LOG_LEVEL", "info")); err == nil {
 		log = log.Level(lvl)
 	}
@@ -253,6 +255,8 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 	defer store.ReleaseLease(context.Background(), owner)
 
 	b := NewBridge(cfg, store, log)
+	onAuth := func() { b.onAuthRejected(ctx) }
+	authWatcher.fn.Store(&onAuth)
 	go serveHTTP(ctx, cfg, b, store, log)
 
 	// Connect. If the session is missing or Google rejects it, stay up in
@@ -305,6 +309,7 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 			b.saveSession(ctx)
 		case <-beat.C:
 			b.heartbeat(ctx)
+			go b.retryPending(ctx)
 		}
 	}
 }

@@ -83,6 +83,8 @@ type Bridge struct {
 	lastEvent  atomic.Int64
 	state      atomic.Value // string: ok | need-cookies | pairing
 	phoneDown  atomic.Int64 // unix seconds when the phone stopped responding; 0 = fine
+	authTrip   atomic.Bool  // a 401 already put us in need-cookies this process
+	draining   atomic.Bool  // retryPending is running
 	restart    chan string
 }
 
@@ -249,18 +251,22 @@ func (b *Bridge) waitForMedia(ctx context.Context, m *libgm.WrappedMessage, thum
 	time.AfterFunc(mediaWaitMax, func() {
 		if latest, ok := b.mediaWaits.LoadAndDelete(id); ok {
 			b.log.Warn().Str("message_id", id).Msg("full-size media never arrived; forwarding what we have")
-			b.processMessage(ctx, latest.(*libgm.WrappedMessage), true)
+			b.processMessage(ctx, latest.(*libgm.WrappedMessage), true, 0)
 		}
 	})
 }
 
 func (b *Bridge) handleMessage(ctx context.Context, m *libgm.WrappedMessage) {
-	b.processMessage(ctx, m, false)
+	b.processMessage(ctx, m, false, 0)
 }
 
 // processMessage forwards an allowlisted message. force skips waiting for
 // full-size media (used by the waitForMedia fallback).
-func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, force bool) {
+//
+// tries > 0 means this is a retry from the pending queue. If the message
+// can't be forwarded (conversation lookup or webhook failed), it's un-marked
+// as seen and queued for retry instead of being dropped.
+func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, force bool, tries int) {
 	if m.IsOld {
 		return
 	}
@@ -323,6 +329,7 @@ func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, fo
 	conv, err := b.conversation(ctx, convID)
 	if err != nil {
 		b.log.Warn().Err(err).Str("conversation_id", convID).Msg("get conversation")
+		b.deferMessage(ctx, m, tries, "get conversation: "+err.Error())
 		return
 	}
 	if !b.lineAllows(conv) {
@@ -370,6 +377,7 @@ func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, fo
 	b.log.Info().Str("conversation_id", convID).Str("message_id", evt.MessageID).Bool("from_me", sender.IsMe).Msg("forwarding message")
 	if err := b.postWebhook(ctx, evt); err != nil {
 		b.log.Err(err).Str("message_id", evt.MessageID).Msg("webhook delivery failed")
+		b.deferMessage(ctx, m, tries, "webhook: "+err.Error())
 	}
 }
 

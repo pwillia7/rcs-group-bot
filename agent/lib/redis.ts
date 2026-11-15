@@ -25,6 +25,8 @@ export const keys = {
   /** Full Redis key for an RPC reply; the connector writes `${prefix}:${suffix}`. */
   rpc: (suffix: string) => `${prefix}:${suffix}`,
   alert: (name: string) => `${prefix}:alert-agent:${name}`,
+  /** Last deployment the bot was told about in this conversation (see deployNote). */
+  deployNoted: (conversationId: string) => `${prefix}:deploy-noted:${conversationId}`,
 };
 
 export type OutboxItem = {

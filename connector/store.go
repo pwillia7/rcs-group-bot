@@ -27,6 +27,11 @@ type Store interface {
 	// FirstSeen returns true the first time an ID is marked.
 	FirstSeen(ctx context.Context, kind, id string, ttl time.Duration) (bool, error)
 	Has(ctx context.Context, kind, id string) (bool, error)
+	Forget(ctx context.Context, kind, id string) error
+	// Pending: inbound messages that couldn't be forwarded yet (e.g. Google
+	// rejected the session mid-message); retried once the connection is healthy.
+	PushPending(ctx context.Context, item []byte) error
+	PopPending(ctx context.Context) ([]byte, error)                       // nil, nil when empty
 	PopOutbox(ctx context.Context, timeout time.Duration) ([]byte, error) // nil, nil on timeout
 	PushOutbox(ctx context.Context, item []byte) error
 	// SetKey writes <prefix>:<suffix> (ttl 0 = no expiry). Used for heartbeat,
@@ -136,6 +141,22 @@ func (r *redisStore) Has(ctx context.Context, kind, id string) (bool, error) {
 	return n > 0, err
 }
 
+func (r *redisStore) Forget(ctx context.Context, kind, id string) error {
+	return r.rdb.Del(ctx, r.k(kind, id)).Err()
+}
+
+func (r *redisStore) PushPending(ctx context.Context, item []byte) error {
+	return r.rdb.LPush(ctx, r.k("pending"), item).Err()
+}
+
+func (r *redisStore) PopPending(ctx context.Context) ([]byte, error) {
+	data, err := r.rdb.RPop(ctx, r.k("pending")).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	return data, err
+}
+
 func (r *redisStore) PopOutbox(ctx context.Context, timeout time.Duration) ([]byte, error) {
 	res, err := r.rdb.BRPop(ctx, timeout, r.k("outbox")).Result()
 	if errors.Is(err, redis.Nil) {
@@ -190,11 +211,12 @@ func (r *redisStore) ReleaseLease(ctx context.Context, owner string) {
 // ---- local file/memory store (dev) ---------------------------------------
 
 type localStore struct {
-	path   string
-	seal   *sealer
-	mu     sync.Mutex
-	seen   map[string]time.Time
-	outbox chan []byte
+	path    string
+	seal    *sealer
+	mu      sync.Mutex
+	seen    map[string]time.Time
+	outbox  chan []byte
+	pending [][]byte
 }
 
 func newLocalStore(dir string, seal *sealer) (*localStore, error) {
@@ -245,6 +267,31 @@ func (l *localStore) Has(_ context.Context, kind, id string) (bool, error) {
 	return ok && time.Now().Before(exp), nil
 }
 
+func (l *localStore) Forget(_ context.Context, kind, id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.seen, kind+":"+id)
+	return nil
+}
+
+func (l *localStore) PushPending(_ context.Context, item []byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pending = append(l.pending, item)
+	return nil
+}
+
+func (l *localStore) PopPending(context.Context) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.pending) == 0 {
+		return nil, nil
+	}
+	item := l.pending[0]
+	l.pending = l.pending[1:]
+	return item, nil
+}
+
 func (l *localStore) PopOutbox(ctx context.Context, timeout time.Duration) ([]byte, error) {
 	select {
 	case item := <-l.outbox:
@@ -277,6 +324,10 @@ func (l *localStore) GetKey(_ context.Context, suffix string) ([]byte, error) {
 	return data, err
 }
 
-func (l *localStore) AcquireLease(context.Context, string, time.Duration) (bool, error) { return true, nil }
-func (l *localStore) RenewLease(context.Context, string, time.Duration) (bool, error)   { return true, nil }
-func (l *localStore) ReleaseLease(context.Context, string)                              {}
+func (l *localStore) AcquireLease(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (l *localStore) RenewLease(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (l *localStore) ReleaseLease(context.Context, string) {}

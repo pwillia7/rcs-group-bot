@@ -9,6 +9,10 @@
 //	gm-cookies.exe -login     one-time: sign into Google in the dedicated profile
 //	gm-cookies.exe            check state; push cookies only if needed (scheduled)
 //	gm-cookies.exe -force     push cookies now, even if the connector is healthy
+//
+// Built as a GUI-subsystem exe (-ldflags -H=windowsgui) so the scheduled run never
+// opens a console window. Scheduled runs log with -log; -login attaches to the
+// terminal it was started from so its instructions still print.
 package main
 
 import (
@@ -46,9 +50,19 @@ func main() {
 		profile    = flag.String("profile", filepath.Join(os.Getenv("LOCALAPPDATA"), "rcs-group-bot-chrome"), "dedicated Chrome user-data-dir")
 		secretFile = flag.String("secret-file", filepath.Join(exeDir, "admin-secret.txt"), "file with GM_ADMIN_SECRET")
 		chrome     = flag.String("chrome", `C:\Program Files\Google\Chrome\Application\chrome.exe`, "Chrome executable")
+		logFile    = flag.String("log", "", "append log output to this file (scheduled runs)")
 	)
 	flag.Parse()
 	log.SetFlags(log.LstdFlags)
+	if *logFile != "" {
+		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err == nil {
+			defer f.Close()
+			log.SetOutput(f)
+		}
+	} else {
+		attachConsole()
+	}
 
 	if *login {
 		if err := doLogin(*chrome, *profile); err != nil {

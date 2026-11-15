@@ -1,4 +1,5 @@
 import selfModification from "eve/extensions/self-modification/remote";
+import { FALLBACK_MODEL } from "../../lib/models";
 
 // Lets the bot write new tools/skills/instructions for itself, as a *draft PR*
 // on your copy of this repo. It never touches the running deployment; the owner
@@ -15,6 +16,11 @@ const repository =
 export default selfModification({
   source: { git: { repository, directory: "." } },
   target: { branch: "main" },
+  // Pin to a Gateway model. Without this the subagent inherits the parent turn's
+  // model id, and when that turn ran on local Qwen the id (e.g. "qwen3.8-27b") gets
+  // sent to AI Gateway → "The requested model is not available".
+  model: FALLBACK_MODEL,
+  reasoning: "medium",
   credentials: { pat: true }, // EVE_SELF_MODIFICATION_GITHUB_TOKEN (fine-grained, this repo only)
   authorize: ({ principal }) => principal?.authenticator === "gm-connector" && principal.principalType === "user",
 });

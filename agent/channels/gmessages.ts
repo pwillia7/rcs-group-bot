@@ -5,6 +5,7 @@ import { defineChannel, POST } from "eve/channels";
 import { getModelMode, modelLabel, pickBackend, qwenHealthy, setModelMode, type ModelMode } from "../lib/models";
 import { keys, pushOutbox, redis, type ConnectorState } from "../lib/redis";
 import { toRcsText } from "../lib/rcs-format";
+import { applyIntent, findPoll, parseIntent } from "../lib/polls";
 
 // Inbound event posted by the Go connector (connector/bridge.go InboundEvent).
 type InboundEvent = {
@@ -71,6 +72,27 @@ function formatLine(evt: InboundEvent): string {
 }
 
 /** Split a long reply on paragraph/sentence boundaries so each RCS bubble stays readable. */
+/**
+ * One-time note on the first message after a redeploy. Without it the model
+ * trusts its own earlier "that PR is still pending" over its tool list, since
+ * nothing in the conversation says the code changed.
+ */
+async function deployNote(conv: string): Promise<string> {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA;
+  if (!sha) return "";
+  const prev = await redis().get<string>(keys.deployNoted(conv));
+  if (prev === sha) return "";
+  await redis().set(keys.deployNoted(conv), sha);
+  const lines = (process.env.VERCEL_GIT_COMMIT_MESSAGE ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  // "Merge pull request #2 from …" + PR title → "PR #2: <title>"
+  const pr = lines[0]?.match(/^Merge pull request (#\d+)/);
+  const summary = pr ? `PR ${pr[1]} merged: ${lines[1] ?? ""}` : (lines[0] ?? "");
+  return (
+    `[System note: you were redeployed since your last reply${summary ? ` (${summary.slice(0, 200)})` : ""}. ` +
+    `Anything you earlier called pending or a draft may be live now: check your tool list, not past messages.]\n\n`
+  );
+}
+
 function chunk(text: string): string[] {
   const out: string[] = [];
   let rest = text.trim();
@@ -191,6 +213,24 @@ export default defineChannel<State>({
       const line = formatLine(evt);
       const triggered = TRIGGER.test(text) || text.startsWith("/");
 
+      // Poll intents (vote / add / status / close) are handled without the model and stay silent
+      // unless the message clearly matches. Skip the bot's own 🤖 messages and slash commands.
+      if (!text.startsWith("🤖") && !text.startsWith("/") && text) {
+        try {
+          const poll = await findPoll(conv);
+          const intent = parseIntent(text.replace(TRIGGER, " "), poll);
+          if (intent) {
+            const reply_ = await applyIntent(conv, evt.sender?.name || evt.sender?.id || "Someone", intent);
+            if (reply_) {
+              await reply(conv, reply_, `poll:${evt.messageId}`);
+              return new Response(null, { status: 202 });
+            }
+          }
+        } catch (err) {
+          console.error("[gmessages] poll handling failed", err);
+        }
+      }
+
       if (!triggered) {
         // Not addressed: remember it as context for the next time the bot is mentioned.
         const r = redis();
@@ -238,13 +278,14 @@ export default defineChannel<State>({
         )
       ).filter((f) => f !== null);
       const message =
-        backlog.length || sentAfter.length
+        (await deployNote(conv)) +
+        (backlog.length || sentAfter.length
           ? [
               backlog.length ? `Messages in the group since you last spoke:\n${backlog.join("\n")}\n\n` : "",
               `New message addressed to you:\n${line}`,
               sentAfter.length ? `\n\nSent right after it (part of the same request):\n${sentAfter.join("\n")}` : "",
             ].join("")
-          : line;
+          : line);
       await source.send(files.length ? [{ type: "text" as const, text: message }, ...files] : message, {
         // Per-sender identity from the HMAC-verified connector. `isOwner` gates
         // owner-only capabilities such as self-modification (draft PRs).

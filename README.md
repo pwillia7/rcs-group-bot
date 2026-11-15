@@ -53,6 +53,7 @@ It takes about 30–45 minutes. If you'd rather do it yourself, `SETUP.md` works
 - **Remember things** about the group ("bot remember that Sam is vegetarian"), in a shared notes document.
 - **Search the chat's history** on the phone, even from before the bot joined ("bot when did we last talk about the cabin trip?").
 - **Set reminders** ("bot remind us Friday at 7 to book the table"), including repeating ones.
+- **Run polls** ("bot start a poll: Friday or Saturday?"). People vote by just texting the letter ("B"), can add options ("add Sunday"), and see results with "poll status".
 - **Post a daily "stupid quote"** dug up from the chat's past (optional, 9 AM).
 - **Add features to itself.** "bot, add a tool that tracks who owes who money" makes the bot write the code and open a draft pull request on your GitHub repo. Nothing changes until the owner reviews and merges it.
 
@@ -156,7 +157,9 @@ flowchart LR
 ### Keeping it alive
 
 - **One connector at a time.** A Redis lease keeps rollouts from running two Google sessions at once. The libgm session is stored in Redis, encrypted with AES-GCM, because daemon disks are ephemeral.
-- **Degraded mode.** If Google rejects the session, the connector stays up and alerts ntfy. The desktop **gm-cookies** helper notices within 2 minutes and pushes cookies from a dedicated, signed-in Chrome profile. The connector then refreshes the existing pairing with no emoji tap. If the pairing itself is gone, it re-pairs and sends the emoji to ntfy.
+- **Degraded mode.** If Google rejects the session, the connector stays up and alerts ntfy. The desktop **gm-cookies** helper notices within 2 minutes and pushes cookies from a dedicated, signed-in Chrome profile. The connector then refreshes the existing pairing with no emoji tap. If the pairing itself is gone, it re-pairs and sends the emoji to ntfy. The connector watches its own logs for Google's first HTTP 401, so it flips to degraded right away instead of waiting for libgm to give up.
+- **No dropped messages.** If a message arrives but can't be forwarded (the session just expired, or the webhook failed), it goes on a retry queue in Redis and is re-sent once the connection is healthy (up to 10 tries, for up to 6 hours).
+- **Redeploy note.** The first message after a new deployment tells the bot it was redeployed, so it checks its tool list instead of assuming a feature it proposed is still pending.
 - **Watchdog.** An eve schedule checks the connector's heartbeat every 10 minutes, so you hear about a dead daemon even though it can't alert for itself.
 
 ### Self-modification
