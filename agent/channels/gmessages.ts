@@ -286,6 +286,8 @@ export default defineChannel<State>({
               sentAfter.length ? `\n\nSent right after it (part of the same request):\n${sentAfter.join("\n")}` : "",
             ].join("")
           : line);
+      // A stale flag from a turn that ended without text must not mute this one.
+      await redis().del(keys.gifSent(conv));
       await source.send(files.length ? [{ type: "text" as const, text: message }, ...files] : message, {
         // Per-sender identity from the HMAC-verified connector. `isOwner` gates
         // owner-only capabilities such as self-modification (draft PRs).
@@ -376,6 +378,8 @@ export default defineChannel<State>({
       if (data.kind !== "text" || data.phase !== "reply" || typeof data.value !== "string") return;
       const conversationId = ctx.channel.continuation?.token;
       if (!conversationId || !data.value.trim()) return;
+      // A GIF was the reply this turn (send_gif); don't follow it with chatter.
+      if (await redis().del(keys.gifSent(conversationId))) return;
       const base = `${ctx.session.id}:${ctx.position.line}:${ctx.position.index}`;
       const parts = chunk(toRcsText(data.value));
       for (const [i, text] of parts.entries()) {

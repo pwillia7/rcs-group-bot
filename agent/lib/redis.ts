@@ -27,6 +27,8 @@ export const keys = {
   alert: (name: string) => `${prefix}:alert-agent:${name}`,
   /** Last deployment the bot was told about in this conversation (see deployNote). */
   deployNoted: (conversationId: string) => `${prefix}:deploy-noted:${conversationId}`,
+  /** Set by send_gif: the GIF is the reply, so the turn's closing text is dropped. */
+  gifSent: (conversationId: string) => `${prefix}:gif-sent:${conversationId}`,
 };
 
 export type OutboxItem = {
@@ -35,6 +37,8 @@ export type OutboxItem = {
   conversationId: string;
   text?: string;
   replyToMessageId?: string;
+  /** Public https image/GIF/video the connector sends as an attachment; `text` becomes its caption. */
+  mediaUrl?: string;
   count?: number;
   search?: string;
   cursor?: string;

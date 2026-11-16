@@ -54,6 +54,7 @@ type OutboxItem struct {
 	ConversationID   string `json:"conversationId"`
 	Text             string `json:"text,omitempty"`
 	ReplyToMessageID string `json:"replyToMessageId,omitempty"`
+	MediaURL         string `json:"mediaUrl,omitempty"` // public https image/GIF/video to send as an attachment (Text becomes its caption)
 
 	// history
 	Count    int    `json:"count,omitempty"`
@@ -277,6 +278,23 @@ func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, fo
 		b.log.Debug().Str("conversation_id", convID).Msg("ignoring message in non-allowlisted conversation")
 		return
 	}
+	// Our own sends: log their status transitions (so a send the phone later
+	// fails is visible) and stop here — they're never forwarded.
+	if tmp := m.GetTmpID(); tmp != "" {
+		if sent, _ := b.store.Has(ctx, "sent", tmp); sent {
+			media := 0
+			for _, info := range m.GetMessageInfo() {
+				if info.GetMediaContent() != nil {
+					media++
+				}
+			}
+			b.log.Info().Str("tmp_id", tmp).Str("message_id", m.GetMessageID()).
+				Str("status", m.GetMessageStatus().GetStatus().String()).
+				Str("status_text", m.GetMessageStatus().GetStatusText()).
+				Int("media", media).Msg("own send status")
+			return
+		}
+	}
 	// Photos: tell the agent one is on its way as early as possible (it waits
 	// briefly for a photo sent together with a "bot ..." text).
 	hasImage, mediaComplete, thumbOnly := imageState(m.GetMessageInfo())
@@ -475,30 +493,55 @@ func (b *Bridge) deliver(ctx context.Context, item OutboxItem) error {
 		return b.cli.SetTyping(ctx, item.ConversationID, simPayload)
 	}
 	text := strings.TrimSpace(item.Text)
-	if text == "" {
-		return nil
+	var media *gmproto.MessageInfo
+	if item.MediaURL != "" {
+		// Download/upload first so a bad URL doesn't leave a lone marker in the chat.
+		if media, err = b.mediaInfo(ctx, item.MediaURL); err != nil {
+			return err
+		}
+		if text == "" {
+			// A bare attachment would look like the owner sent it; mark it first.
+			text = b.cfg.BotMarker
+		}
 	}
-	if b.cfg.BotPrefix != "" && !strings.HasPrefix(text, b.cfg.BotMarker) {
-		text = b.cfg.BotPrefix + text
+	if text != "" {
+		if b.cfg.BotPrefix != "" && !strings.HasPrefix(text, b.cfg.BotMarker) {
+			text = b.cfg.BotPrefix + text
+		}
+		if err := b.send(ctx, conv, simPayload, item.ConversationID, item.ReplyToMessageID, &gmproto.MessageInfo{
+			Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{Content: text}},
+		}); err != nil {
+			return err
+		}
 	}
+	if media != nil {
+		// The attachment goes in its own message, like Messages for Web / mautrix
+		// send it. Sharing a payload with text, the phone dropped the GIF.
+		if err := b.send(ctx, conv, simPayload, item.ConversationID, "", media); err != nil {
+			return fmt.Errorf("send media: %w", err)
+		}
+	}
+	return nil
+}
+
+// send posts one message (one MessageInfo) and records its tmp ID for echo suppression.
+func (b *Bridge) send(ctx context.Context, conv *gmproto.Conversation, simPayload *gmproto.SIMPayload, convID, replyTo string, info *gmproto.MessageInfo) error {
 	tmpID := util.GenerateTmpID()
 	_, _ = b.store.FirstSeen(ctx, "sent", tmpID, 24*time.Hour)
 	req := &gmproto.SendMessageRequest{
-		ConversationID: item.ConversationID,
+		ConversationID: convID,
 		MessagePayload: &gmproto.MessagePayload{
 			TmpID:          tmpID,
-			ConversationID: item.ConversationID,
+			ConversationID: convID,
 			ParticipantID:  conv.GetDefaultOutgoingID(),
 			TmpID2:         tmpID,
-			MessageInfo: []*gmproto.MessageInfo{{
-				Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{Content: text}},
-			}},
+			MessageInfo:    []*gmproto.MessageInfo{info},
 		},
 		SIMPayload: simPayload,
 		TmpID:      tmpID,
 	}
-	if item.ReplyToMessageID != "" {
-		req.Reply = &gmproto.ReplyPayload{MessageID: item.ReplyToMessageID}
+	if replyTo != "" {
+		req.Reply = &gmproto.ReplyPayload{MessageID: replyTo}
 	}
 	resp, err := b.cli.SendMessage(ctx, req)
 	if err != nil {
@@ -507,6 +550,6 @@ func (b *Bridge) deliver(ctx context.Context, item OutboxItem) error {
 	if resp.GetStatus() != gmproto.SendMessageResponse_SUCCESS {
 		return fmt.Errorf("send status %s", resp.GetStatus())
 	}
-	b.log.Info().Str("conversation_id", item.ConversationID).Str("tmp_id", tmpID).Msg("sent")
+	b.log.Info().Str("conversation_id", convID).Str("tmp_id", tmpID).Bool("media", info.GetMediaContent() != nil).Msg("sent")
 	return nil
 }

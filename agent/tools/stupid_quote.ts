@@ -4,6 +4,13 @@ import { z } from "zod";
 import { fetchHistory, type HistoryMessage } from "../lib/history";
 
 const TZ = process.env.BOT_TIMEZONE ?? "America/New_York";
+const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** Calendar-day number (in TZ) for a timestamp. */
+function dayNumber(ts: number): number {
+  const [y, m, d] = dayFmt.format(new Date(ts)).split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 86_400_000;
+}
 const dateFmt = new Intl.DateTimeFormat("en-US", {
   timeZone: TZ,
   year: "numeric",
@@ -27,8 +34,9 @@ function isQuotable(m: HistoryMessage): boolean {
 }
 
 function relativeAge(ts: number): string {
-  const days = Math.floor((Date.now() - ts) / 86_400_000);
+  const days = dayNumber(Date.now()) - dayNumber(ts);
   if (days < 1) return "today";
+  if (days === 1) return "yesterday";
   if (days < 14) return `${days} day(s) ago`;
   if (days < 60) return `about ${Math.round(days / 7)} weeks ago`;
   if (days < 700) return `about ${Math.round(days / 30)} months ago`;

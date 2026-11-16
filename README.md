@@ -53,6 +53,7 @@ It takes about 30–45 minutes. If you'd rather do it yourself, `SETUP.md` works
 - **Remember things** about the group ("bot remember that Sam is vegetarian"), in a shared notes document.
 - **Search the chat's history** on the phone, even from before the bot joined ("bot when did we last talk about the cabin trip?").
 - **Set reminders** ("bot remind us Friday at 7 to book the table"), including repeating ones.
+- **Send GIFs** ("bot send a gif of Michael Scott saying no"), as real animated attachments. No API key: it searches Tenor (then Giphy), or sends any GIF link it finds on the web.
 - **Run polls** ("bot start a poll: Friday or Saturday?"). People vote by just texting the letter ("B"), can add options ("add Sunday"), and see results with "poll status".
 - **Post a daily "stupid quote"** dug up from the chat's past (optional, 9 AM).
 - **Add features to itself.** "bot, add a tool that tracks who owes who money" makes the bot write the code and open a draft pull request on your GitHub repo. Nothing changes until the owner reviews and merges it.
