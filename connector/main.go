@@ -234,30 +234,44 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 		return fmt.Errorf("WEBHOOK_SECRET is required when WEBHOOK_URL is set")
 	}
 
-	// Single-instance lease (rollouts briefly overlap old and new daemons).
+	b := NewBridge(cfg, store, log)
+	// Serve /healthz before taking the lease: a standby instance waiting on the
+	// lease must still pass the liveness probe or Vercel keeps restarting it.
+	go serveHTTP(ctx, cfg, b, store, log)
+
+	// Single-instance lease. vercel.json runs two instances: one leader holds the
+	// Google Messages session, the other waits here as a hot standby. Vercel can
+	// stop an instance at any time (e.g. recycling it after ~24h), and a replacement
+	// can take minutes to start, so the standby takes over within seconds instead.
+	// The leader releases the lease on SIGTERM; if it dies hard, the TTL expires.
 	owner := randomID()
 	const leaseTTL = 30 * time.Second
-	for {
+	b.state.Store("standby")
+	for waited := false; ; waited = true {
 		got, err := store.AcquireLease(ctx, owner, leaseTTL)
 		if err != nil {
 			return fmt.Errorf("acquire lease: %w", err)
 		}
 		if got {
+			if waited {
+				log.Info().Msg("took over the lease from the previous connector")
+			}
 			break
 		}
-		log.Info().Msg("another connector holds the lease; waiting")
+		if !waited {
+			log.Info().Msg("another connector holds the lease; standing by")
+		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(5 * time.Second):
+		case <-time.After(2 * time.Second):
 		}
 	}
 	defer store.ReleaseLease(context.Background(), owner)
+	b.state.Store("starting")
 
-	b := NewBridge(cfg, store, log)
 	onAuth := func() { b.onAuthRejected(ctx) }
 	authWatcher.fn.Store(&onAuth)
-	go serveHTTP(ctx, cfg, b, store, log)
 
 	// Connect. If the session is missing or Google rejects it, stay up in
 	// degraded mode: keep heartbeating and processing the outbox so fresh

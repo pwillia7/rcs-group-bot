@@ -137,8 +137,10 @@ This prints conversation IDs and names. Ask the user which one is the group, the
 ```bash
 printf '%s' '<conversation id>' | vercel env add ALLOWED_CONVERSATIONS production
 cd .. && vercel deploy --prod
-vercel daemons scale gm-connector iad1=1
+vercel daemons scale gm-connector iad1=2
 ```
+
+Two instances on purpose: one holds the Google session and the other is a hot standby that takes over within seconds if Vercel stops the first. A Redis lease makes sure only one is ever connected.
 
 The connector ignores every conversation not in `ALLOWED_CONVERSATIONS`.
 

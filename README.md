@@ -193,7 +193,7 @@ Anyone in the group can ask the bot for a new tool, skill or behavior change. A 
 vercel logs --since 30m --query 'source:daemon'    # connector logs
 vercel logs --since 30m                             # everything
 vercel daemons list                                  # connector status
-vercel daemons scale gm-connector iad1=0             # stop the connector (iad1=1 to start it)
+vercel daemons scale gm-connector iad1=0             # stop the connector (iad1=2 to start it: leader + standby)
 ```
 
 When Google signs the bot out and you don't run the cookie helper, repeat [SETUP.md](SETUP.md) step 6.
