@@ -36,6 +36,8 @@ if ($Foreground) {
         "--cache-type-v", $CacheTypeV
     )
     if ($EnableMetrics) { $Arguments += "--metrics" }
+    if ($SleepIdleSeconds -gt 0) { $Arguments += @("--sleep-idle-seconds", "$SleepIdleSeconds") }
+    if ($MaxTokens -gt 0) { $Arguments += @("--n-predict", "$MaxTokens") }
     if ($MmprojPath -and (Test-Path $MmprojPath)) { $Arguments += @("--mmproj", $MmprojPath) }
     New-Item -ItemType Directory -Force -Path (Split-Path $LogFile) | Out-Null
     # Start-Process with file redirects: PowerShell 5.1 turns native stderr into

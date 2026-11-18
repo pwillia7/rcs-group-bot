@@ -20,6 +20,21 @@ $Parallel      = 2
 $GpuLayers     = "all"
 $FlashAttention = "on"
 
+# Free the GPU when the chat goes quiet: after this many idle seconds the server
+# unloads the model (VRAM back to ~0; /health still answers, so the bot keeps
+# routing to Qwen) and reloads it on the next request, which then takes 30-50 s
+# longer. Loaded, the model holds ~21 GB even when idle, which a game or any
+# other GPU work on the PC would otherwise go without. 10 min outlasts a group
+# chat's lulls. -1 = never sleep.
+$SleepIdleSeconds = 600
+
+# Most tokens one reply may generate, reasoning included. The bot sends no
+# max_tokens, and a reply that gets stuck reasoning would otherwise run to the
+# slot's full context (~30 min) and hold up the chat: a runaway doesn't error,
+# so the fallback to Claude never fires. Normal replies are ~1,500 tokens;
+# 8192 is ~4 min at 35 tok/s on a 3090. -1 = no cap.
+$MaxTokens = 8192
+
 # Qwen3.8 thinking-mode sampling (recommended settings)
 $Temperature     = 1.0
 $TopP            = 0.95
