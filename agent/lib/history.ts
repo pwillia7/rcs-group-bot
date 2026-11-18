@@ -28,5 +28,6 @@ export async function fetchHistory(
   }
   if (!result) return null;
   await redis().del(keys.rpc(replyKey));
-  return result;
+  // The connector is Go: a page with nothing in it can come back as `messages: null`.
+  return { ...result, messages: result.messages ?? [] };
 }

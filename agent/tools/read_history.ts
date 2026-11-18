@@ -73,6 +73,8 @@ export default defineTool({
     }
     if (!result) return "The phone didn't answer in time (it may be offline). Try again later.";
     await redis().del(keys.rpc(replyKey));
+    // The connector is Go: a page with nothing in it can come back as `messages: null`.
+    result.messages ??= [];
     if (result.error && result.messages.length === 0) return `Couldn't read history: ${result.error}`;
 
     // Compact text, not JSON: far fewer tokens for the model.

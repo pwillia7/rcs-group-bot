@@ -227,6 +227,9 @@ func (b *Bridge) handleHistory(ctx context.Context, conv *gmproto.Conversation, 
 		return errors.New("history request without rpc reply key")
 	}
 	res := b.fetchHistory(ctx, conv, item)
+	if res.Messages == nil {
+		res.Messages = []historyLine{} // "[]", not "null": the agent maps over it
+	}
 	data, _ := json.Marshal(res)
 	return b.store.SetKey(ctx, item.ReplyKey, data, 2*time.Minute)
 }
