@@ -60,3 +60,6 @@ $LogFile       = "$PSScriptRoot\logs\llama-server.log"
 
 # Scheduled task that hosts the server (survives SSH disconnects)
 $TaskName = "QwenBot"
+
+# Seconds to wait before relaunching llama-server after it exits/crashes
+$RestartDelaySeconds = 30

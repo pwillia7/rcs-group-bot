@@ -43,9 +43,17 @@ if ($Foreground) {
     # Start-Process with file redirects: PowerShell 5.1 turns native stderr into
     # terminating errors when redirected with *>> under ErrorActionPreference=Stop.
     $errLog = [IO.Path]::ChangeExtension($LogFile, ".err.log")
-    $p = Start-Process -FilePath $LlamaServer -ArgumentList $Arguments -NoNewWindow -PassThru -Wait `
-        -RedirectStandardOutput $LogFile -RedirectStandardError $errLog
-    exit $p.ExitCode
+    # Supervise: llama-server aborts outright if it can't get VRAM back when it
+    # wakes from idle sleep ("failed to reload model after sleeping" while
+    # other GPU work holds the card), and Task Scheduler doesn't restart a task
+    # whose process exits, so relaunch it here. Stop-QwenBot ends the task
+    # (this loop) before killing llama-server.
+    while ($true) {
+        $p = Start-Process -FilePath $LlamaServer -ArgumentList $Arguments -NoNewWindow -PassThru -Wait `
+            -RedirectStandardOutput $LogFile -RedirectStandardError $errLog
+        if (Test-Path $errLog) { Copy-Item $errLog "$errLog.prev" -Force }
+        Start-Sleep -Seconds $RestartDelaySeconds
+    }
 }
 
 # Background start via the scheduled task

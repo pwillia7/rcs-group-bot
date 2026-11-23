@@ -15,5 +15,9 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) 
 # S4U: runs whether or not you're signed in, so signing out / switching sessions
 # no longer kills the server. No stored password needed.
 $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Limited
-Register-ScheduledTask -TaskName $TaskName -Action $action -Settings $settings -Principal $principal -Force | Out-Null
-"registered scheduled task $TaskName (S4U, restarts on failure)"
+# Start at boot (no sign-in needed with S4U). The delay lets drives, the GPU
+# driver and Tailscale come up first.
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger.Delay = "PT1M"
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+"registered scheduled task $TaskName (S4U, starts at boot, restarts on failure)"
