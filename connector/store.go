@@ -17,6 +17,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// errStoreUnavailable separates "couldn't read the session" from "no usable session".
+var errStoreUnavailable = errors.New("store unavailable")
+
 // Store holds everything the connector needs to persist or share:
 // the (encrypted) libgm session, dedup/echo sets, the reply outbox and the
 // single-instance lease. Redis in production (Vercel Daemon has no persistent
@@ -40,6 +43,8 @@ type Store interface {
 	GetKey(ctx context.Context, suffix string) ([]byte, error) // nil, nil when absent
 	AcquireLease(ctx context.Context, owner string, ttl time.Duration) (bool, error)
 	RenewLease(ctx context.Context, owner string, ttl time.Duration) (bool, error)
+	// WaitLeaseRelease returns when the leader releases the lease, or on timeout.
+	WaitLeaseRelease(ctx context.Context, timeout time.Duration) error
 	ReleaseLease(ctx context.Context, owner string)
 }
 
@@ -123,7 +128,7 @@ func (r *redisStore) LoadSession(ctx context.Context) ([]byte, error) {
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	} else if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errStoreUnavailable, err)
 	}
 	return r.seal.open(data)
 }
@@ -195,7 +200,10 @@ return 0`)
 
 var releaseScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
-  return redis.call("DEL", KEYS[1])
+  redis.call("DEL", KEYS[1])
+  redis.call("LPUSH", KEYS[2], "1")
+  redis.call("EXPIRE", KEYS[2], 120)
+  return 1
 end
 return 0`)
 
@@ -205,7 +213,15 @@ func (r *redisStore) RenewLease(ctx context.Context, owner string, ttl time.Dura
 }
 
 func (r *redisStore) ReleaseLease(ctx context.Context, owner string) {
-	_ = releaseScript.Run(ctx, r.rdb, []string{r.k("lease")}, owner).Err()
+	_ = releaseScript.Run(ctx, r.rdb, []string{r.k("lease"), r.k("lease-released")}, owner).Err()
+}
+
+func (r *redisStore) WaitLeaseRelease(ctx context.Context, timeout time.Duration) error {
+	err := r.rdb.BRPop(ctx, timeout, r.k("lease-released")).Err()
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+	return err
 }
 
 // ---- local file/memory store (dev) ---------------------------------------
@@ -329,5 +345,8 @@ func (l *localStore) AcquireLease(context.Context, string, time.Duration) (bool,
 }
 func (l *localStore) RenewLease(context.Context, string, time.Duration) (bool, error) {
 	return true, nil
+}
+func (l *localStore) WaitLeaseRelease(context.Context, time.Duration) error {
+	return nil
 }
 func (l *localStore) ReleaseLease(context.Context, string) {}

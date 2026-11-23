@@ -15,6 +15,8 @@ const prefix = process.env.REDIS_PREFIX ?? "gm";
 export const keys = {
   outbox: `${prefix}:outbox`,
   modelMode: `${prefix}:model-mode`,
+  /** Set (with a TTL) when Qwen missed its first-token deadline; auto mode uses Claude meanwhile. */
+  qwenSlow: `${prefix}:qwen-slow`,
   state: `${prefix}:state`,
   heartbeat: `${prefix}:heartbeat`,
   recent: (conversationId: string) => `${prefix}:recent:${conversationId}`,

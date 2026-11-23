@@ -63,6 +63,8 @@ vercel integration add upstash/upstash-kv    # Upstash Redis: sets REDIS_URL, KV
 vercel blob create-store <name>-memory       # Vercel Blob for group notes: connect it to this project (Production)
 ```
 
+Upstash's free tier stops every command at 500K a month, and the bot uses roughly 400K. Tell the user that, and suggest switching the database to Pay as You Go (Vercel → Storage → the Redis database → plan; under $1/month) so a busy month can't take the bot offline. It's their call.
+
 Check with `vercel env ls production` that `REDIS_URL`, `KV_REST_API_URL`, `KV_REST_API_TOKEN` and `BLOB_READ_WRITE_TOKEN` exist.
 
 ### Step 4: Secrets and settings
@@ -140,7 +142,7 @@ cd .. && vercel deploy --prod
 vercel daemons scale gm-connector iad1=2
 ```
 
-Two instances on purpose: one holds the Google session and the other is a hot standby that takes over within seconds if Vercel stops the first. A Redis lease makes sure only one is ever connected.
+Two instances on purpose: one holds the Google session and the other is a hot standby that takes over right away if Vercel stops the first cleanly, or within about 3.5 minutes after a hard crash. A Redis lease makes sure only one is ever connected.
 
 The connector ignores every conversation not in `ALLOWED_CONVERSATIONS`.
 

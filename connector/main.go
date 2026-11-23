@@ -7,10 +7,12 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -226,6 +228,22 @@ func cmdList(ctx context.Context, cfg Config, store Store, log zerolog.Logger) e
 	return nil
 }
 
+// Redis bills per command (Upstash free tier: 500K/month, about 16K/day) and
+// these loops run around the clock, so check the daily total before shortening
+// any of them.
+const (
+	leaseTTL     = 150 * time.Second
+	leaseRenew   = time.Minute // two attempts within the TTL
+	standbyWait  = time.Minute // a clean release wakes the standby immediately
+	outboxWait   = time.Minute // blocking pop: returns as soon as there is an item
+	beatInterval = 2 * time.Minute
+	maxBackoff   = time.Minute // between retries while Redis is failing
+)
+
+func nextBackoff(d time.Duration) time.Duration {
+	return min(cmp.Or(d*2, 2*time.Second), maxBackoff)
+}
+
 func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) error {
 	if len(cfg.AllowedConversations) == 0 {
 		log.Warn().Msg("ALLOWED_CONVERSATIONS is empty: nothing will be forwarded or sent")
@@ -242,29 +260,50 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 	// Single-instance lease. vercel.json runs two instances: one leader holds the
 	// Google Messages session, the other waits here as a hot standby. Vercel can
 	// stop an instance at any time (e.g. recycling it after ~24h), and a replacement
-	// can take minutes to start, so the standby takes over within seconds instead.
-	// The leader releases the lease on SIGTERM; if it dies hard, the TTL expires.
+	// can take minutes to start, so the standby takes over instead of waiting for it.
+	// The leader wakes the standby when it releases the lease on SIGTERM; if it
+	// dies hard, the standby takes over once the TTL expires.
 	owner := randomID()
-	const leaseTTL = 30 * time.Second
 	b.state.Store("standby")
-	for waited := false; ; waited = true {
-		got, err := store.AcquireLease(ctx, owner, leaseTTL)
-		if err != nil {
-			return fmt.Errorf("acquire lease: %w", err)
+	var backoff time.Duration
+	waited := false
+	for {
+		if ctx.Err() != nil {
+			return nil
 		}
-		if got {
+		got, err := store.AcquireLease(ctx, owner, leaseTTL)
+		if err == nil && got {
 			if waited {
 				log.Info().Msg("took over the lease from the previous connector")
 			}
 			break
 		}
-		if !waited {
-			log.Info().Msg("another connector holds the lease; standing by")
+		if err == nil {
+			if !waited {
+				log.Info().Msg("another connector holds the lease; standing by")
+				waited = true
+			}
+			// The blocking read ignores cancellation, so don't hold up SIGTERM for it.
+			done := make(chan error, 1)
+			go func() { done <- store.WaitLeaseRelease(ctx, standbyWait) }()
+			select {
+			case <-ctx.Done():
+				return nil
+			case err = <-done:
+			}
+			if err == nil {
+				backoff = 0
+				continue
+			}
 		}
+		// Redis trouble (outage, quota): wait it out. Exiting here means a crash
+		// loop, which Vercel restarts ever more slowly.
+		backoff = nextBackoff(backoff)
+		log.Warn().Err(err).Dur("retry_in", backoff).Msg("lease unavailable; retrying")
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(2 * time.Second):
+		case <-time.After(backoff):
 		}
 	}
 	defer store.ReleaseLease(context.Background(), owner)
@@ -276,7 +315,10 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 	// Connect. If the session is missing or Google rejects it, stay up in
 	// degraded mode: keep heartbeating and processing the outbox so fresh
 	// cookies (from the desktop gm-cookies helper) can repair it.
-	if cli, err := loadClient(ctx, store, log); err != nil {
+	if cli, err := loadClient(ctx, store, log); errors.Is(err, errStoreUnavailable) {
+		// Not a pairing problem: degrading here would end in a needless re-pair.
+		return err
+	} else if err != nil {
 		b.markNeedsCookies(ctx, "no usable session: "+err.Error())
 	} else {
 		b.cli = cli
@@ -296,9 +338,9 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 
 	go b.runOutbox(ctx)
 
-	renew := time.NewTicker(10 * time.Second)
+	renew := time.NewTicker(leaseRenew)
 	save := time.NewTicker(10 * time.Minute)
-	beat := time.NewTicker(time.Minute)
+	beat := time.NewTicker(beatInterval)
 	defer renew.Stop()
 	defer save.Stop()
 	defer beat.Stop()
@@ -317,12 +359,17 @@ func cmdServe(ctx context.Context, cfg Config, store Store, log zerolog.Logger) 
 		case <-renew.C:
 			ok, err := store.RenewLease(ctx, owner, leaseTTL)
 			if err == nil && !ok {
+				// It may only have expired during a Redis outage; reclaim it if free.
+				ok, err = store.AcquireLease(ctx, owner, leaseTTL)
+			}
+			if err == nil && !ok {
 				return fmt.Errorf("lost lease to another instance")
 			}
 		case <-save.C:
 			b.saveSession(ctx)
 		case <-beat.C:
 			b.heartbeat(ctx)
+			go b.nudgePhone(ctx)
 			go b.retryPending(ctx)
 		}
 	}

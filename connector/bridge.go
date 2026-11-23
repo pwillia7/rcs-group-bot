@@ -86,6 +86,7 @@ type Bridge struct {
 	phoneDown  atomic.Int64 // unix seconds when the phone stopped responding; 0 = fine
 	authTrip   atomic.Bool  // a 401 already put us in need-cookies this process
 	draining   atomic.Bool  // retryPending is running
+	alerted    sync.Map     // alert dedupKey -> time.Time it may next be sent
 	restart    chan string
 }
 
@@ -440,15 +441,21 @@ func (b *Bridge) postWebhook(ctx context.Context, evt InboundEvent) error {
 // ---- outbound ---------------------------------------------------------------
 
 func (b *Bridge) runOutbox(ctx context.Context) {
+	var backoff time.Duration
 	for ctx.Err() == nil {
-		raw, err := b.store.PopOutbox(ctx, 25*time.Second)
+		raw, err := b.store.PopOutbox(ctx, outboxWait)
 		if err != nil {
 			if ctx.Err() == nil {
-				b.log.Warn().Err(err).Msg("outbox pop")
-				time.Sleep(2 * time.Second)
+				backoff = nextBackoff(backoff)
+				b.log.Warn().Err(err).Dur("retry_in", backoff).Msg("outbox pop")
+				select {
+				case <-ctx.Done():
+				case <-time.After(backoff):
+				}
 			}
 			continue
 		}
+		backoff = 0
 		if raw == nil {
 			continue
 		}

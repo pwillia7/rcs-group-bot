@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { defineChannel, POST } from "eve/channels";
 
-import { getModelMode, modelLabel, pickBackend, qwenHealthy, setModelMode, type ModelMode } from "../lib/models";
+import { getModelMode, modelLabel, pickBackend, qwenHealthy, qwenSlow, setModelMode, type ModelMode } from "../lib/models";
 import { keys, pushOutbox, redis, type ConnectorState } from "../lib/redis";
 import { toRcsText } from "../lib/rcs-format";
 import { applyIntent, findPoll, parseIntent } from "../lib/polls";
@@ -146,8 +146,9 @@ async function handleCommand(evt: InboundEvent, text: string, end: () => Promise
       return true;
     }
     case "status": {
-      const [mode, healthy, backend] = await Promise.all([getModelMode(), qwenHealthy(), pickBackend()]);
-      await reply(conv, `Mode: ${mode}. Qwen: ${healthy ? "up" : "down"}. Next reply uses: ${modelLabel(backend)}.`, id);
+      const [mode, healthy, slow, backend] = await Promise.all([getModelMode(), qwenHealthy(), qwenSlow(), pickBackend()]);
+      const qwen = !healthy ? "down" : slow ? "up but slow (GPU busy?), skipped for a few minutes" : "up";
+      await reply(conv, `Mode: ${mode}. Qwen: ${qwen}. Next reply uses: ${modelLabel(backend)}.`, id);
       return true;
     }
     case "new":
@@ -310,10 +311,11 @@ export default defineChannel<State>({
       if (!verify(raw, h.get("x-gm-timestamp"), h.get("x-gm-signature"), process.env.GM_ADMIN_SECRET)) {
         return new Response("unauthorized", { status: 401 });
       }
-      const [state, heartbeat] = await Promise.all([
-        redis().get<ConnectorState>(keys.state),
-        redis().get<number | string>(keys.heartbeat),
-      ]);
+      // Polled every 2 min by gm-cookies: one MGET, not two GETs (billed per command).
+      const [state, heartbeat] = await redis().mget<[ConnectorState | null, number | string | null]>(
+        keys.state,
+        keys.heartbeat,
+      );
       return Response.json({ ...(state ?? { state: "unknown", at: 0 }), heartbeat: Number(heartbeat ?? 0) });
     }),
     // Debug: recent events of a conversation's session (admin HMAC). Body: { conversationId, limit? }

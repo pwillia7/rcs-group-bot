@@ -15,4 +15,8 @@ export default defineAgent({
     }
     return { model: FALLBACK_MODEL, reasoning: "low", modelContextWindowTokens: CONTEXT_WINDOW };
   }),
+  // Summaries always run on Claude. On 2026-11-21 a Qwen compaction spent the whole
+  // 8192-token cap reasoning, returned an empty summary, and parked the session.
+  // Compaction is rare (history near the window), so the Gateway cost is small.
+  compaction: { model: FALLBACK_MODEL },
 });

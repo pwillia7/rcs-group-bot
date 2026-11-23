@@ -51,33 +51,154 @@ export async function setModelMode(mode: ModelMode): Promise<void> {
   await redis().set(keys.modelMode, mode);
 }
 
+/**
+ * How long Qwen gets to produce its first token (text, reasoning or a tool call)
+ * before the call is cancelled and rerun on Claude. Normal cold path: model
+ * reload after idle sleep 30-50 s + prefill at ~900 tok/s, so ~100 s worst case
+ * on a long uncached prompt. A shared GPU (ComfyUI generating) drops prefill to
+ * ~50 tok/s and a 17k prompt then takes ~6 min, which this catches.
+ */
+const QWEN_FIRST_TOKEN_TIMEOUT_MS = Number(process.env.QWEN_FIRST_TOKEN_TIMEOUT_MS ?? 150_000);
+/** After a missed deadline, skip Qwen this long so later calls don't wait again. */
+const QWEN_SLOW_TTL_S = Number(process.env.QWEN_SLOW_TTL_S ?? 600);
+
+export async function qwenSlow(): Promise<boolean> {
+  try {
+    return (await redis().get(keys.qwenSlow)) != null;
+  } catch {
+    return false;
+  }
+}
+
+async function markQwenSlow(): Promise<void> {
+  try {
+    await redis().set(keys.qwenSlow, Date.now(), { ex: QWEN_SLOW_TTL_S });
+  } catch {
+    // best effort: without the flag the next call just waits for the deadline again
+  }
+}
+
 /** Decide the backend for one turn. */
 export async function pickBackend(): Promise<Backend> {
   const mode = await getModelMode();
   if (mode === "claude") return "claude";
   if (mode === "qwen") return "qwen";
+  if (await qwenSlow()) return "claude";
   return (await qwenHealthy()) ? "qwen" : "claude";
 }
 
+/** Stream parts that mean the model is actually producing output. */
+const PROGRESS_PARTS = new Set([
+  "text-start",
+  "text-delta",
+  "reasoning-start",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-call",
+  "finish",
+  "error",
+]);
+
+export class QwenFirstTokenTimeout extends Error {
+  constructor() {
+    super(`qwen produced no output within ${QWEN_FIRST_TOKEN_TIMEOUT_MS} ms`);
+  }
+}
+
 /**
- * If Qwen fails before it starts answering (PC went to sleep mid-turn, Funnel
- * hiccup), retry the same call on Claude via AI Gateway instead of failing the turn.
+ * Start a Qwen stream and wait for its first real output part. Resolves with a
+ * stream that replays what was buffered and then continues; rejects (and aborts
+ * the request, which frees the llama-server slot) if the deadline passes first.
+ */
+export async function qwenStreamWithDeadline(
+  model: Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0]["model"],
+  params: Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0]["params"],
+) {
+  const deadline = new AbortController();
+  const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, deadline.signal]) : deadline.signal;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    deadline.abort(new QwenFirstTokenTimeout());
+  }, QWEN_FIRST_TOKEN_TIMEOUT_MS);
+  // The caller cancelling isn't Qwen being slow.
+  params.abortSignal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+
+  try {
+    const result = await model.doStream({ ...params, abortSignal: signal });
+    const reader = result.stream.getReader();
+    const buffered: Awaited<ReturnType<typeof reader.read>>["value"][] = [];
+    let done = false;
+    // llama-server may send headers before prefill finishes, so the deadline
+    // covers reading too; aborting the signal errors the pending read.
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        break;
+      }
+      buffered.push(next.value);
+      if (PROGRESS_PARTS.has(next.value.type)) break;
+    }
+    clearTimeout(timer);
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const part of buffered) controller.enqueue(part);
+        if (done) controller.close();
+      },
+      async pull(controller) {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
+    return { ...result, stream };
+  } catch (error) {
+    clearTimeout(timer);
+    if (timedOut) {
+      deadline.abort();
+      throw new QwenFirstTokenTimeout();
+    }
+    throw error;
+  }
+}
+
+/**
+ * Qwen -> Claude fallback.
+ * - Qwen fails before answering (PC asleep, Funnel hiccup): rerun the call on Claude.
+ * - Qwen sends nothing for QWEN_FIRST_TOKEN_TIMEOUT_MS (GPU shared with ComfyUI,
+ *   stuck prefill): cancel it, rerun on Claude, and flag Qwen slow so the rest of
+ *   the turn and the next turns skip it for QWEN_SLOW_TTL_S.
+ * A caller cancelling the call (params.abortSignal) is passed through, not retried.
  */
 const fallbackToGateway: LanguageModelMiddleware = {
   specificationVersion: "v4",
   wrapGenerate: async ({ doGenerate, params }) => {
+    if (await qwenSlow()) return gateway(FALLBACK_MODEL).doGenerate(params);
     try {
       return await doGenerate();
     } catch (error) {
+      if (params.abortSignal?.aborted) throw error;
       console.warn("[models] qwen generate failed; falling back to gateway", error);
       return gateway(FALLBACK_MODEL).doGenerate(params);
     }
   },
-  wrapStream: async ({ doStream, params }) => {
+  wrapStream: async ({ model, params }) => {
+    if (await qwenSlow()) return gateway(FALLBACK_MODEL).doStream(params);
     try {
-      return await doStream();
+      return await qwenStreamWithDeadline(model, params);
     } catch (error) {
-      console.warn("[models] qwen stream failed; falling back to gateway", error);
+      if (params.abortSignal?.aborted) throw error;
+      if (error instanceof QwenFirstTokenTimeout) {
+        console.warn(`[models] ${error.message}; falling back to gateway for ${QWEN_SLOW_TTL_S}s`);
+        await markQwenSlow();
+      } else {
+        console.warn("[models] qwen stream failed; falling back to gateway", error);
+      }
       return gateway(FALLBACK_MODEL).doStream(params);
     }
   },

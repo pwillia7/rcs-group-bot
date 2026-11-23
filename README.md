@@ -73,7 +73,8 @@ The bot answers a message when it **starts with "bot"**, or "hey bot", "ok bot",
 
 - **Vercel Pro:** $20/month per seat, plus usage. A group chat bot uses very little.
 - **AI replies:** pay as you go through [Vercel AI Gateway](https://vercel.com/ai-gateway). With the default model (Claude Sonnet 5.5) a typical reply costs about **1–2 cents**, and a web search adds about $0.007.
-- **Upstash Redis and Vercel Blob:** the free tiers are plenty.
+- **Vercel Blob:** the free tier is plenty.
+- **Upstash Redis:** the connector's idle loops use about 375K commands a month, and chat adds a little more. That fits under the free tier's 500K, but when the free tier hits its cap *every* command fails and the bot goes offline until the month resets. Pay as You Go ($0.20 per 100K commands, under $1/month here) removes the cap.
 - **Optional:** run replies on your own gaming PC (24 GB of GPU memory) with a local Qwen model, and AI replies become free whenever the PC is on.
 
 ## Privacy: what the bot sees and stores
@@ -139,7 +140,7 @@ flowchart LR
     AGENT --- SANDBOX
     AGENT --- BLOB
     CONN -->|"logout · phone down ·<br/>re-pair emoji"| NTFY
-    AGENT -->|"watchdog: no heartbeat"| NTFY
+    AGENT -->|"watchdog: no heartbeat ·<br/>Redis failing"| NTFY
     COOKIES -.->|"/gm/admin/state ·<br/>/gm/admin/cookies"| AGENT
     AGENT -.->|"self-modification<br/>draft PRs"| GH
     GH -->|"merge → deploy"| vercel
@@ -151,7 +152,7 @@ flowchart LR
 2. The **eve channel** (`agent/channels/gmessages.ts`) decides whether the message is for the bot:
    - **Not addressed:** the line goes into a short Redis backlog. It's used as context the next time someone mentions the bot.
    - **Addressed** (starts with "bot", or a `/command`): commands are handled directly. Otherwise the backlog plus the message start a turn in the group's durable eve session.
-3. The **model router** (`agent/lib/models.ts`) uses Claude via Vercel AI Gateway by default. If you run the optional local Qwen, it checks Qwen's `/health` through Tailscale Funnel and prefers Qwen when it's up. If Qwen fails mid-turn, middleware retries on Claude. `/model` overrides the choice.
+3. The **model router** (`agent/lib/models.ts`) uses Claude via Vercel AI Gateway by default. If you run the optional local Qwen, it checks Qwen's `/health` through Tailscale Funnel and prefers Qwen when it's up. If Qwen fails before answering, or sends no first token within 150 s (for example the GPU is busy with another job), middleware cancels it and reruns the call on Claude. A missed deadline also skips Qwen for 10 minutes (`gm:qwen-slow`, shown in `/status`). Compaction summaries always run on Claude, so a slow local model can't stall a long conversation. `/model` overrides the choice.
 4. The model can use the **sandbox** (shell and files), **group memory** (a notes document in Blob), and **tools**. `read_history` asks the connector for older messages over a Redis request/reply, since the daemon accepts no inbound traffic.
 5. Reply text is pushed to the **Redis outbox**. The connector pops it, adds the `🤖 ` prefix, and sends it from the phone.
 
@@ -161,7 +162,10 @@ flowchart LR
 - **Degraded mode.** If Google rejects the session, the connector stays up and alerts ntfy. The desktop **gm-cookies** helper notices within 2 minutes and pushes cookies from a dedicated, signed-in Chrome profile. The connector then refreshes the existing pairing with no emoji tap. If the pairing itself is gone, it re-pairs and sends the emoji to ntfy. The connector watches its own logs for Google's first HTTP 401, so it flips to degraded right away instead of waiting for libgm to give up.
 - **No dropped messages.** If a message arrives but can't be forwarded (the session just expired, or the webhook failed), it goes on a retry queue in Redis and is re-sent once the connection is healthy (up to 10 tries, for up to 6 hours).
 - **Redeploy note.** The first message after a new deployment tells the bot it was redeployed, so it checks its tool list instead of assuming a feature it proposed is still pending.
-- **Watchdog.** An eve schedule checks the connector's heartbeat every 10 minutes, so you hear about a dead daemon even though it can't alert for itself.
+- **Redis budget.** Upstash bills per command, and the free tier stops *all* commands at 500K a month. The connector's idle loops are tuned for that (constants above `cmdServe` in `connector/main.go`): the standby blocks on a release signal instead of polling. A clean shutdown hands over to the standby immediately; a hard crash takes up to about 3.5 min.
+- **Redis outages.** If Redis errors (an outage, or a used-up quota), the connector retries with backoff instead of crash-looping, and an unreadable session isn't mistaken for a lost pairing.
+- **Phone off.** The connector nudges an unresponsive phone every 2 minutes, so it reconnects shortly after the phone is back.
+- **Watchdog.** An eve schedule checks the connector's heartbeat every 10 minutes, so you hear about a dead daemon even though it can't alert for itself. It also alerts when Redis itself is failing.
 
 ### Self-modification
 

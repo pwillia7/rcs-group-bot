@@ -86,9 +86,27 @@ func (b *Bridge) heartbeat(ctx context.Context) {
 	}
 }
 
+// nudgePhone asks an unresponsive phone for updates on every beat. libgm's own
+// retries back off to 64 minutes, so a phone that was charged and switched back
+// on could otherwise go unnoticed for an hour. Any answer clears phoneDown.
+func (b *Bridge) nudgePhone(ctx context.Context) {
+	if s, _ := b.state.Load().(string); s != "ok" || b.cli == nil || b.phoneDown.Load() == 0 {
+		return
+	}
+	if err := b.cli.SetActiveSession(ctx); err != nil {
+		b.log.Warn().Err(err).Msg("nudge phone")
+	}
+}
+
 // notify posts to ntfy. dedupKey "" always sends; otherwise at most once per `every`.
 func (b *Bridge) notify(ctx context.Context, dedupKey string, every time.Duration, priority int, title, message string) {
 	if dedupKey != "" {
+		// Remember locally too: without Redis the shared dedup can't work, and
+		// asking it on every beat costs commands.
+		if next, ok := b.alerted.Load(dedupKey); ok && time.Now().Before(next.(time.Time)) {
+			return
+		}
+		b.alerted.Store(dedupKey, time.Now().Add(every))
 		if first, err := b.store.FirstSeen(ctx, "alert", dedupKey, every); err == nil && !first {
 			return
 		}

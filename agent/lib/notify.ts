@@ -12,8 +12,14 @@ export async function notify(
     console.warn(`[notify] ${title}: ${message}`);
     return;
   }
-  const first = await redis().set(keys.alert(name), "1", { nx: true, ex: everySeconds });
-  if (first !== "OK") return;
+  try {
+    const first = await redis().set(keys.alert(name), "1", { nx: true, ex: everySeconds });
+    if (first !== "OK") return;
+  } catch (error) {
+    // No Redis to dedup with: send only in the first 10 min of each period (the watchdog runs every 10).
+    console.warn("[notify] dedup unavailable", error);
+    if ((Date.now() / 1000) % everySeconds >= 600) return;
+  }
   const url = new URL(target);
   const topic = url.pathname.replace(/^\/+|\/+$/g, "");
   await fetch(new URL("/", url), {
