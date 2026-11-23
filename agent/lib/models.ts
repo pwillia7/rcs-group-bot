@@ -25,15 +25,26 @@ const qwenProvider = createOpenAICompatible({
   includeUsage: true,
 });
 
-/** Qwen health: llama-server's /health needs no API key. */
-export async function qwenHealthy(timeoutMs = 1500): Promise<boolean> {
+/**
+ * Qwen health: llama-server's /health needs no API key. The Funnel TLS handshake
+ * alone takes 1.5-4 s on roughly one call in six (measured 2026-11-23), so a
+ * short timeout sent healthy-Qwen turns to Claude. Allow 5 s and retry once:
+ * a real outage (PC off, server down) still costs at most ~10 s per turn.
+ */
+export async function qwenHealthy(timeoutMs = 5000, attempts = 2): Promise<boolean> {
   if (!QWEN_BASE_URL) return false;
-  try {
-    const res = await fetch(`${QWEN_BASE_URL}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    return res.ok;
-  } catch {
-    return false;
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`${QWEN_BASE_URL}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (res.ok) return true;
+      lastError = `HTTP ${res.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? `${error.name}: ${error.message}` : error;
+    }
   }
+  console.warn(`[models] qwen health check failed ${attempts}x (${lastError}); using gateway`);
+  return false;
 }
 
 export async function getModelMode(): Promise<ModelMode> {
