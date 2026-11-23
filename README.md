@@ -148,13 +148,13 @@ flowchart LR
 
 ### How a message flows
 
-1. Someone posts in the group. The **connector** holds a Messages-for-web session with the phone, using libgm, the reverse-engineered protocol behind [mautrix-gmessages](https://github.com/mautrix/gmessages). It drops anything outside `ALLOWED_CONVERSATIONS`, ignores its own 🤖 echoes, and POSTs the message to the agent's `/gm/events` webhook with an HMAC signature.
+1. Someone posts in the group. The **connector** holds a Messages-for-web session with the phone, using libgm, the reverse-engineered protocol behind [mautrix-gmessages](https://github.com/mautrix/gmessages). It drops anything outside `ALLOWED_CONVERSATIONS`, ignores its own 🤖/🦙 echoes, and POSTs the message to the agent's `/gm/events` webhook with an HMAC signature.
 2. The **eve channel** (`agent/channels/gmessages.ts`) decides whether the message is for the bot:
    - **Not addressed:** the line goes into a short Redis backlog. It's used as context the next time someone mentions the bot.
    - **Addressed** (starts with "bot", or a `/command`): commands are handled directly. Otherwise the backlog plus the message start a turn in the group's durable eve session.
 3. The **model router** (`agent/lib/models.ts`) uses Claude via Vercel AI Gateway by default. If you run the optional local Qwen, it checks Qwen's `/health` through Tailscale Funnel and prefers Qwen when it's up. If Qwen fails before answering, or sends no first token within 150 s (for example the GPU is busy with another job), middleware cancels it and reruns the call on Claude. A missed deadline also skips Qwen for 10 minutes (`gm:qwen-slow`, shown in `/status`). Compaction summaries always run on Claude, so a slow local model can't stall a long conversation. `/model` overrides the choice.
 4. The model can use the **sandbox** (shell and files), **group memory** (a notes document in Blob), and **tools**. `read_history` asks the connector for older messages over a Redis request/reply, since the daemon accepts no inbound traffic.
-5. Reply text is pushed to the **Redis outbox**. The connector pops it, adds the `🤖 ` prefix, and sends it from the phone.
+5. Reply text is pushed to the **Redis outbox**, marked with the emoji of the model that wrote it (🦙 Qwen, 🤖 Claude). The connector pops it, adds the `🤖 ` prefix to anything not already marked, and sends it from the phone.
 
 ### Keeping it alive
 

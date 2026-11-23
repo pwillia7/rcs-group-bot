@@ -17,6 +17,8 @@ export const keys = {
   modelMode: `${prefix}:model-mode`,
   /** Set (with a TTL) when Qwen missed its first-token deadline; auto mode uses Claude meanwhile. */
   qwenSlow: `${prefix}:qwen-slow`,
+  /** "qwen" | "claude": backend of the latest model output, for the reply's emoji. */
+  lastBackend: `${prefix}:last-backend`,
   state: `${prefix}:state`,
   heartbeat: `${prefix}:heartbeat`,
   recent: (conversationId: string) => `${prefix}:recent:${conversationId}`,

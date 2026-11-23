@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { defineChannel, POST } from "eve/channels";
 
-import { getModelMode, modelLabel, pickBackend, qwenHealthy, qwenSlow, setModelMode, type ModelMode } from "../lib/models";
+import { getModelMode, isBotText, modelLabel, stripBotMarker, pickBackend, qwenHealthy, qwenSlow, replyEmoji, setModelMode, type ModelMode } from "../lib/models";
 import { keys, pushOutbox, redis, type ConnectorState } from "../lib/redis";
 import { toRcsText } from "../lib/rcs-format";
 import { applyIntent, findPoll, parseIntent } from "../lib/polls";
@@ -215,8 +215,8 @@ export default defineChannel<State>({
       const triggered = TRIGGER.test(text) || text.startsWith("/");
 
       // Poll intents (vote / add / status / close) are handled without the model and stay silent
-      // unless the message clearly matches. Skip the bot's own 🤖 messages and slash commands.
-      if (!text.startsWith("🤖") && !text.startsWith("/") && text) {
+      // unless the message clearly matches. Skip the bot's own messages and slash commands.
+      if (!isBotText(text) && !text.startsWith("/") && text) {
         try {
           const poll = await findPoll(conv);
           const intent = parseIntent(text.replace(TRIGGER, " "), poll);
@@ -384,8 +384,10 @@ export default defineChannel<State>({
       if (await redis().del(keys.gifSent(conversationId))) return;
       const base = `${ctx.session.id}:${ctx.position.line}:${ctx.position.index}`;
       const parts = chunk(toRcsText(data.value));
+      // Mark who wrote it (Qwen or Claude); the connector skips its own 🤖 then.
+      const emoji = await replyEmoji();
       for (const [i, text] of parts.entries()) {
-        await reply(conversationId, text, `${base}:${i}`);
+        await reply(conversationId, `${emoji} ${stripBotMarker(text)}`, `${base}:${i}`);
       }
     },
   },

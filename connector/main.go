@@ -40,8 +40,9 @@ type Config struct {
 	AllowedConversations map[string]struct{}
 	LineMode             string // self | sim | device
 	LineSIMParticipant   string
-	BotPrefix            string // prepended to every send in self/sim mode
-	BotMarker            string // inbound messages starting with this are ignored
+	BotPrefix            string   // prepended to every send in self/sim mode
+	BotMarker            string   // inbound messages starting with this are ignored
+	BotMarkers           []string // BotMarker plus BOT_EXTRA_MARKERS (the agent's per-model emoji)
 	HTTPAddr             string
 	DevAPI               bool
 	NtfyURL              string // e.g. https://ntfy.sh/<secret-topic>; alerts go here
@@ -80,6 +81,16 @@ func loadConfig() Config {
 		cfg.BotPrefix = env("BOT_PREFIX", "")
 	}
 	cfg.BotMarker = strings.TrimSpace(cfg.BotPrefix)
+	if cfg.BotMarker != "" {
+		cfg.BotMarkers = []string{cfg.BotMarker}
+		// The agent marks model replies with the backend's emoji (Qwen 🦙,
+		// Claude 🤖); those are bot messages too, and already prefixed.
+		for _, m := range strings.Split(env("BOT_EXTRA_MARKERS", "🦙"), ",") {
+			if m = strings.TrimSpace(m); m != "" && m != cfg.BotMarker {
+				cfg.BotMarkers = append(cfg.BotMarkers, m)
+			}
+		}
+	}
 	return cfg
 }
 
@@ -407,4 +418,15 @@ func randomID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// botMarker returns the bot marker text starts with, if any.
+func (c Config) botMarker(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	for _, m := range c.BotMarkers {
+		if strings.HasPrefix(text, m) {
+			return m, true
+		}
+	}
+	return "", false
 }

@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { fetchHistory, type HistoryMessage } from "../lib/history";
+import { isBotText } from "../lib/models";
 
 const TZ = process.env.BOT_TIMEZONE ?? "America/New_York";
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -27,7 +28,7 @@ const MAX_CANDIDATES = 40;
 function isQuotable(m: HistoryMessage): boolean {
   const t = m.text?.trim() ?? "";
   if (t.length < 12 || t.length > 280) return false;
-  if (t.startsWith("🤖") || t.startsWith("/")) return false; // bot output and commands
+  if (isBotText(t) || t.startsWith("/")) return false; // bot output and commands
   if (/https?:\/\//i.test(t)) return false;
   if (/\b(bot|claude|qwen)\b/i.test(t)) return false; // messages addressed to the bot
   return true;

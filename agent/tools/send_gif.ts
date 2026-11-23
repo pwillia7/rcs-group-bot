@@ -4,6 +4,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { searchGifs } from "../lib/gifs";
+import { replyEmoji } from "../lib/models";
 import { keys, pushOutbox, redis } from "../lib/redis";
 
 // Posts an animated GIF (or any image/short video) to the group as a real
@@ -84,7 +85,8 @@ export default defineTool({
       id: `gif:${randomUUID()}`,
       conversationId: conv,
       mediaUrl: chosen.url,
-      text: caption,
+      // Marked with the emoji of the model that chose it, like a text reply.
+      text: caption ? `${await replyEmoji()} ${caption}` : await replyEmoji(),
     });
     if (answer) {
       return `Queued the GIF (${chosen.description || chosen.url}); it appears in the chat in a few seconds. Now reply with just the answer they asked for; don't mention or describe the GIF.`;

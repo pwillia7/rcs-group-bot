@@ -1,7 +1,7 @@
 import { defineAgent } from "eve";
 import { defineDynamic } from "eve/models";
 
-import { CONTEXT_WINDOW, FALLBACK_MODEL, pickBackend, qwenModel } from "./lib/models";
+import { claudeModel, CONTEXT_WINDOW, FALLBACK_MODEL, pickBackend, qwenModel } from "./lib/models";
 
 export default defineAgent({
   description: "A friendly assistant that lives in an RCS group chat.",
@@ -13,7 +13,7 @@ export default defineAgent({
     if (backend === "qwen") {
       return { model: qwenModel(), reasoning: "low", modelContextWindowTokens: CONTEXT_WINDOW };
     }
-    return { model: FALLBACK_MODEL, reasoning: "low", modelContextWindowTokens: CONTEXT_WINDOW };
+    return { model: claudeModel(), reasoning: "low", modelContextWindowTokens: CONTEXT_WINDOW };
   }),
   // Summaries always run on Claude. On 2026-11-21 a Qwen compaction spent the whole
   // 8192-token cap reasoning, returned an empty summary, and parked the session.

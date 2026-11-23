@@ -330,7 +330,7 @@ func (b *Bridge) processMessage(ctx context.Context, m *libgm.WrappedMessage, fo
 			return
 		}
 	}
-	if b.cfg.BotMarker != "" && strings.HasPrefix(strings.TrimSpace(body), b.cfg.BotMarker) {
+	if _, ok := b.cfg.botMarker(body); ok {
 		return
 	}
 	// Photos: hold the message until its full-size image is available (or we
@@ -512,7 +512,7 @@ func (b *Bridge) deliver(ctx context.Context, item OutboxItem) error {
 		}
 	}
 	if text != "" {
-		if b.cfg.BotPrefix != "" && !strings.HasPrefix(text, b.cfg.BotMarker) {
+		if _, marked := b.cfg.botMarker(text); b.cfg.BotPrefix != "" && !marked {
 			text = b.cfg.BotPrefix + text
 		}
 		if err := b.send(ctx, conv, simPayload, item.ConversationID, item.ReplyToMessageID, &gmproto.MessageInfo{

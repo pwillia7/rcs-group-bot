@@ -14,6 +14,46 @@ export function modelLabel(backend: Backend): string {
   return backend === "qwen" ? `${QWEN_MODEL} (local, home PC)` : `${FALLBACK_MODEL} (AI Gateway)`;
 }
 export const FALLBACK_MODEL = process.env.FALLBACK_MODEL ?? "anthropic/claude-sonnet-5.5";
+
+/**
+ * Each model reply is marked with its backend's emoji so the group can tell who
+ * is talking. Non-model messages (reminders, polls, commands) keep the
+ * connector's 🤖. The connector must treat every emoji here as a bot marker
+ * (BOT_PREFIX + BOT_EXTRA_MARKERS) so it doesn't forward the bot's own messages
+ * or add a second prefix.
+ */
+export const BACKEND_EMOJI: Record<Backend, string> = {
+  qwen: process.env.QWEN_EMOJI ?? "🦙",
+  claude: process.env.CLAUDE_EMOJI ?? "🤖",
+};
+export const BOT_MARKERS = [...new Set(["🤖", ...Object.values(BACKEND_EMOJI)])];
+export const isBotText = (text: string) => BOT_MARKERS.some((m) => text.trimStart().startsWith(m));
+/** Drop a marker the model wrote itself, so a reply never shows two. */
+export function stripBotMarker(text: string): string {
+  const t = text.trimStart();
+  const m = BOT_MARKERS.find((m) => t.startsWith(m));
+  return m ? t.slice(m.length).trimStart() : text;
+}
+
+/** Backend that produced the latest model output (one chat, turns run one at a time). */
+async function recordBackend(backend: Backend): Promise<void> {
+  try {
+    await redis().set(keys.lastBackend, backend, { ex: 86_400 });
+  } catch {
+    // best effort: the reply then gets the default marker
+  }
+}
+
+/** Emoji for the backend that wrote the latest model output; 🤖-style default if unknown. */
+export async function replyEmoji(): Promise<string> {
+  try {
+    const b = await redis().get<string>(keys.lastBackend);
+    if (b === "qwen" || b === "claude") return BACKEND_EMOJI[b];
+  } catch {
+    // Redis down
+  }
+  return BACKEND_EMOJI.claude;
+}
 // llama-server: -c 204800 --parallel 2 → ~102k per slot. Use the same window for
 // both backends so a mid-session switch never overflows Qwen.
 export const CONTEXT_WINDOW = Number(process.env.MODEL_CONTEXT_WINDOW ?? 100_000);
@@ -189,19 +229,23 @@ export async function qwenStreamWithDeadline(
 const fallbackToGateway: LanguageModelMiddleware = {
   specificationVersion: "v4",
   wrapGenerate: async ({ doGenerate, params }) => {
-    if (await qwenSlow()) return gateway(FALLBACK_MODEL).doGenerate(params);
+    if (await qwenSlow()) return gatewayGenerate(params);
     try {
-      return await doGenerate();
+      const result = await doGenerate();
+      await recordBackend("qwen");
+      return result;
     } catch (error) {
       if (params.abortSignal?.aborted) throw error;
       console.warn("[models] qwen generate failed; falling back to gateway", error);
-      return gateway(FALLBACK_MODEL).doGenerate(params);
+      return gatewayGenerate(params);
     }
   },
   wrapStream: async ({ model, params }) => {
-    if (await qwenSlow()) return gateway(FALLBACK_MODEL).doStream(params);
+    if (await qwenSlow()) return gatewayStream(params);
     try {
-      return await qwenStreamWithDeadline(model, params);
+      const result = await qwenStreamWithDeadline(model, params);
+      await recordBackend("qwen");
+      return result;
     } catch (error) {
       if (params.abortSignal?.aborted) throw error;
       if (error instanceof QwenFirstTokenTimeout) {
@@ -210,11 +254,39 @@ const fallbackToGateway: LanguageModelMiddleware = {
       } else {
         console.warn("[models] qwen stream failed; falling back to gateway", error);
       }
-      return gateway(FALLBACK_MODEL).doStream(params);
+      return gatewayStream(params);
     }
   },
 };
 
+type CallParams = Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0]["params"];
+async function gatewayGenerate(params: CallParams) {
+  await recordBackend("claude");
+  return gateway(FALLBACK_MODEL).doGenerate(params);
+}
+async function gatewayStream(params: CallParams) {
+  await recordBackend("claude");
+  return gateway(FALLBACK_MODEL).doStream(params);
+}
+
 export function qwenModel() {
   return wrapLanguageModel({ model: qwenProvider(QWEN_MODEL), middleware: fallbackToGateway });
+}
+
+/** Claude for chat turns; records the backend so replies get Claude's emoji. */
+export function claudeModel() {
+  return wrapLanguageModel({
+    model: gateway(FALLBACK_MODEL),
+    middleware: {
+      specificationVersion: "v4",
+      wrapGenerate: async ({ doGenerate }) => {
+        await recordBackend("claude");
+        return doGenerate();
+      },
+      wrapStream: async ({ doStream }) => {
+        await recordBackend("claude");
+        return doStream();
+      },
+    },
+  });
 }

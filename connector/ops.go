@@ -309,8 +309,8 @@ func (b *Bridge) fetchHistory(ctx context.Context, conv *gmproto.Conversation, i
 			if sender == "" {
 				sender = "Unknown"
 			}
-			if b.cfg.BotMarker != "" && strings.HasPrefix(text, b.cfg.BotMarker) {
-				sender, text = "Bot (you)", strings.TrimSpace(strings.TrimPrefix(text, b.cfg.BotMarker))
+			if m, ok := b.cfg.botMarker(text); ok {
+				sender, text = "Bot (you)", strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), m))
 			}
 			if search != "" && !strings.Contains(strings.ToLower(text), search) && !strings.Contains(strings.ToLower(sender), search) {
 				continue
