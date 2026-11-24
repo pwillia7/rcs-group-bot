@@ -171,6 +171,8 @@ flowchart LR
 
 Anyone in the group can ask the bot for a new tool, skill or behavior change. A sub-agent checks out this repo in a sandbox and opens a **draft PR**. Nothing changes until the owner reviews and merges it, and merging deploys it. Only allowlisted group messages reach the agent, through the HMAC-verified connector.
 
+To change a PR that's still open ("bot, in that PR make it 9AM"), the `pr_editor` sub-agent (`agent/subagents/pr_editor/`) pushes a follow-up commit to the same PR instead of opening a new one. It uses the GitHub API server-side with the same token, can only touch open `eve-self-modification/*` branches and files under `agent/` (never the guardrail files), and comments on the PR naming who asked.
+
 ### Web search and formatting
 
 - `web_search` (`agent/tools/web_search.ts`) uses AI Gateway's Exa search, fired by a tiny Haiku call, so it works whether the turn runs on Qwen or Claude. It costs about $0.007 per search.
