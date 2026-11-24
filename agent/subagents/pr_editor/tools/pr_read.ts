@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { checkPath, getBotPr, prChangedFiles, readPath } from "../../../lib/github";
+import { checkPath, getBotPr, prChangedFiles, readPath, requireGroupMember } from "../../../lib/github";
 
 const MAX_CHARS = 60_000;
 
@@ -14,7 +14,8 @@ export default defineTool({
     pr: z.number().int().positive().describe("PR number."),
     path: z.string().optional().describe("Repo-relative path under agent/, e.g. agent/lib/polls.ts."),
   }),
-  async execute({ pr, path }) {
+  async execute({ pr, path }, ctx) {
+    requireGroupMember(ctx.session.auth.current);
     const p = await getBotPr(pr);
     if (!path) {
       const files = await prChangedFiles(pr);

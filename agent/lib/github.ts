@@ -170,3 +170,10 @@ export async function commitToBotPr(input: {
 export async function commentOnPr(number: number, body: string): Promise<void> {
   await gh("POST", `/issues/${number}/comments`, { body });
 }
+
+/** Same rule as the self-modification extension: only group members via the connector. */
+export function requireGroupMember(auth: { authenticator: string; principalType: string } | null | undefined): void {
+  if (auth?.authenticator !== "gm-connector" || auth.principalType !== "user") {
+    throw new GitHubError("Only group members can read or change bot PRs.");
+  }
+}
